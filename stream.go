@@ -2,9 +2,9 @@ package stream
 
 import (
 	"bufio"
+	"errors"
 	"fmt"
 	"io"
-	"log"
 )
 
 type Iteratee interface {
@@ -22,21 +22,21 @@ type EnumScanner struct {
 }
 
 func (e *EnumScanner) Step(it Iteratee) (Iteratee, error) {
-	log.Printf("enter %#v", it)
+	// log.Printf("enter %#v", it)
 	if e.scan && !e.in.Scan() {
 		err := e.in.Err()
 		if err == nil {
 			err = it.Final()
 		}
-		log.Printf("error %v", err)
+		// log.Printf("error %v", err)
 		return nil, err
 	}
 	token := e.in.Bytes()
 	next, read, err := it.Next(token)
-	log.Printf("token %q; read %v", token, read)
+	// log.Printf("token %q; read %v", token, read)
 	e.scan = read
-	log.Printf("leave %#v : %v", next, err)
-	return next, err
+	// log.Printf("leave %#v : %v", next, err)
+	return next, newErrEnumScanner(err, token)
 }
 
 func EnumScan(in *bufio.Scanner) *EnumScanner {
@@ -47,6 +47,22 @@ func EnumRead(in io.Reader, split bufio.SplitFunc) *EnumScanner {
 	enum := EnumScan(bufio.NewScanner(in))
 	enum.in.Split(split)
 	return enum
+}
+
+type ErrEnumScanner struct {
+	Err   error
+	Token string
+}
+
+func (e ErrEnumScanner) Error() string {
+	return fmt.Sprintf("token %q: %v", e.Token, e.Err)
+}
+
+func newErrEnumScanner(err error, token []byte) error {
+	if err == nil {
+		return nil
+	}
+	return ErrEnumScanner{err, string(token)}
 }
 
 func Run(e Enumerator, it Iteratee) (err error) {
@@ -63,7 +79,7 @@ type eofI struct{}
 
 func (_ eofI) Final() error { return nil }
 func (_ eofI) Next(token []byte) (Iteratee, bool, error) {
-	return nil, false, ErrTrailingInput(token)
+	return nil, false, ErrExpect("<eof>")
 }
 
 var (
@@ -73,15 +89,35 @@ var (
 type Match string
 
 func (it Match) Final() error {
-	return ErrExpect(it)
+	return ErrExpectQ(it)
 }
 
 func (it Match) Next(token []byte) (Iteratee, bool, error) {
 	if string(token) == string(it) {
 		return nil, true, nil
 	}
-	return nil, false, ErrMistmatch{string(it), string(token)}
+	return nil, false, ErrExpectQ(it)
 }
+
+type SkipAny string
+
+func (it SkipAny) Final() error { return nil }
+
+func (it SkipAny) Next(token []byte) (Iteratee, bool, error) {
+	if string(token) == string(it) {
+		return it, true, nil
+	}
+	return nil, false, nil
+}
+
+type skipI struct{}
+
+func (_ skipI) Final() error { return ErrExpect("a token") }
+func (_ skipI) Next(token []byte) (Iteratee, bool, error) {
+	return nil, true, nil
+}
+
+var Skip skipI
 
 type Then struct {
 	A, B Iteratee
@@ -151,25 +187,15 @@ func (it Star) Next(token []byte) (Iteratee, bool, error) {
 
 // Useful errors.
 
-// ErrTrailingInput reports the first extra token when there should
-// really be the end (e.g. in EOF).
-type ErrTrailingInput string
-
-func (e ErrTrailingInput) Error() string { return fmt.Sprintf("trailing input token: %q", string(e)) }
-
-// ErrMistmatch reports a mismatching token.
-type ErrMistmatch struct {
-	Expect, Got string
-}
-
-func (e ErrMistmatch) Error() string { return fmt.Sprintf("expect %q: got %q", e.Expect, e.Got) }
-
 // ErrUnexpected reports an unexpected token.
-type ErrUnexpected string
+var ErrUnexpected = errors.New("unexpected token")
 
-func (e ErrUnexpected) Error() string { return fmt.Sprintf("unexpected token: %q", string(e)) }
-
-// ErrExpect reports that a token is expected but not given.
+// ErrExpect reports that something is expected but not given.
 type ErrExpect string
 
-func (e ErrExpect) Error() string { return fmt.Sprintf("expect %q", string(e)) }
+func (e ErrExpect) Error() string { return fmt.Sprintf("expect %s", string(e)) }
+
+// ErrExpectQ is like ErrExpect but quotes the string.
+type ErrExpectQ string
+
+func (e ErrExpectQ) Error() string { return fmt.Sprintf("expect %q", string(e)) }

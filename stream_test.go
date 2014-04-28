@@ -79,7 +79,7 @@ func (i Balance) Next(token []byte) (Iteratee, bool, error) {
 			return i - 1, true, nil
 		}
 	default:
-		return nil, false, ErrUnexpected(token)
+		return nil, false, ErrUnexpected
 	}
 }
 
