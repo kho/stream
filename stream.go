@@ -2,7 +2,6 @@ package stream
 
 import (
 	"bufio"
-	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -67,30 +66,14 @@ func (_ eofI) Next(token []byte) (Iteratee, bool, error) {
 	return nil, false, ErrTrailingInput(token)
 }
 
-type ErrTrailingInput string
-
-func (e ErrTrailingInput) Error() string { return fmt.Sprintf("trailing input token: %q", string(e)) }
-
 var (
 	EOF = eofI{} // an iteratee that ensures there is no trailing input or returns ErrTrailingInput.
 )
 
-var ErrUnexpectedEnd = errors.New("unexpected end of input")
-
-type ErrMistmatch struct {
-	Expect, Got string
-}
-
-func (e ErrMistmatch) Error() string { return fmt.Sprintf("expect %q: got %q", e.Expect, e.Got) }
-
-type ErrUnexpected string
-
-func (e ErrUnexpected) Error() string { return fmt.Sprintf("unexpected token: %q", string(e)) }
-
 type Match string
 
 func (it Match) Final() error {
-	return ErrUnexpectedEnd
+	return ErrExpect(it)
 }
 
 func (it Match) Next(token []byte) (Iteratee, bool, error) {
@@ -125,6 +108,31 @@ func (it Then) Next(token []byte) (Iteratee, bool, error) {
 	return it.B, read, nil
 }
 
+type Seq []Iteratee
+
+func (it Seq) Final() error {
+	for _, i := range it {
+		if err := i.Final(); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (it Seq) Next(token []byte) (Iteratee, bool, error) {
+	if len(it) == 0 {
+		return nil, false, nil
+	}
+	next, read, err := it[0].Next(token)
+	if err != nil {
+		return nil, false, err
+	}
+	if next != nil {
+		return Then{next, it[1:]}, read, nil
+	}
+	return it[1:], read, nil
+}
+
 type Star struct {
 	A Iteratee
 }
@@ -140,3 +148,28 @@ func (it Star) Next(token []byte) (Iteratee, bool, error) {
 	}
 	return it, read, nil
 }
+
+// Useful errors.
+
+// ErrTrailingInput reports the first extra token when there should
+// really be the end (e.g. in EOF).
+type ErrTrailingInput string
+
+func (e ErrTrailingInput) Error() string { return fmt.Sprintf("trailing input token: %q", string(e)) }
+
+// ErrMistmatch reports a mismatching token.
+type ErrMistmatch struct {
+	Expect, Got string
+}
+
+func (e ErrMistmatch) Error() string { return fmt.Sprintf("expect %q: got %q", e.Expect, e.Got) }
+
+// ErrUnexpected reports an unexpected token.
+type ErrUnexpected string
+
+func (e ErrUnexpected) Error() string { return fmt.Sprintf("unexpected token: %q", string(e)) }
+
+// ErrExpect reports that a token is expected but not given.
+type ErrExpect string
+
+func (e ErrExpect) Error() string { return fmt.Sprintf("expect %q", string(e)) }
