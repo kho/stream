@@ -13,22 +13,16 @@ type Iteratee interface {
 	Next([]byte) (Iteratee, bool, error)
 }
 
-type Enumerator struct {
+type Enumerator interface {
+	Step(Iteratee) (Iteratee, error)
+}
+
+type EnumScanner struct {
 	in   *bufio.Scanner
 	scan bool // true iff we must call scan before getting next token.
 }
 
-func NewEnumerator(in *bufio.Scanner) *Enumerator {
-	return &Enumerator{in, true}
-}
-
-func NewEnumeratorWith(in io.Reader, split bufio.SplitFunc) *Enumerator {
-	enum := NewEnumerator(bufio.NewScanner(in))
-	enum.in.Split(split)
-	return enum
-}
-
-func (e *Enumerator) Step(it Iteratee) (Iteratee, error) {
+func (e *EnumScanner) Step(it Iteratee) (Iteratee, error) {
 	log.Printf("enter %#v", it)
 	if e.scan && !e.in.Scan() {
 		err := e.in.Err()
@@ -46,7 +40,17 @@ func (e *Enumerator) Step(it Iteratee) (Iteratee, error) {
 	return next, err
 }
 
-func (e *Enumerator) Run(it Iteratee) (err error) {
+func EnumScan(in *bufio.Scanner) *EnumScanner {
+	return &EnumScanner{in, true}
+}
+
+func EnumRead(in io.Reader, split bufio.SplitFunc) *EnumScanner {
+	enum := EnumScan(bufio.NewScanner(in))
+	enum.in.Split(split)
+	return enum
+}
+
+func Run(e Enumerator, it Iteratee) (err error) {
 	for {
 		it, err = e.Step(it)
 		if err != nil || it == nil {
