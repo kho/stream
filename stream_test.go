@@ -114,7 +114,7 @@ func TestFoo(t *testing.T) {
 	if err := Run(enumBad, abcN); err == nil {
 		t.Errorf("expect error")
 	} else {
-		t.Log("enumBad gives %v", err)
+		t.Log("enumBad gives:", err)
 	}
 
 	var bal Balance
