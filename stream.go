@@ -7,64 +7,47 @@ import (
 	"io"
 )
 
+// Token is the unit of input being consumed by Iteratees.
+type Token []byte
+
+// Iteratee is a state in a (not necessarily finite) state machine.
+//
+// TODO: some convention about data fields.
 type Iteratee interface {
+	// Final indicates the end of input and requests the Iteratee to
+	// finish any left-over work.
 	Final() error
-	Next([]byte) (Iteratee, bool, error)
+	// Next takes in the next token and take the transition. The token
+	// should not be modified. Also the token is only guaranteed to
+	// remain unchanged before Next() returns (thus copies should be
+	// made if one needs to retain information in the token). The return
+	// value is interpreted in the following way:
+	//
+	// - If any error is encountered, it should return a non-nil error
+	// and other return values are ignored.
+	//
+	// - If there is no error, the returned Iteratee is the next state
+	// and the returned bool indicates whether the input token has been
+	// consumed. Specifically, the next state may be nil, indicating
+	// reaching a final state.
+	Next(Token) (Iteratee, bool, error)
 }
 
+// Enumerator is the input source. It gathers input tokens and
+// executes it on Iteratees.
 type Enumerator interface {
+	// Step feeds the current token to the given Iteratee. It may assume
+	// the input Iteratee is not nil. When the end of input is
+	// encountered, it calls the Final() method of the input Iteratee
+	// and returns a nil Iteratee. Successive calls of Step on returning
+	// non-nill Iteratees should correctly consume the sequence of input
+	// tokens (see Run()).
 	Step(Iteratee) (Iteratee, error)
 }
 
-type EnumScanner struct {
-	in   *bufio.Scanner
-	scan bool // true iff we must call scan before getting next token.
-}
-
-func (e *EnumScanner) Step(it Iteratee) (Iteratee, error) {
-	// log.Printf("enter %#v", it)
-	if e.scan && !e.in.Scan() {
-		err := e.in.Err()
-		if err == nil {
-			err = it.Final()
-		}
-		// log.Printf("error %v", err)
-		return nil, err
-	}
-	token := e.in.Bytes()
-	next, read, err := it.Next(token)
-	// log.Printf("token %q; read %v", token, read)
-	e.scan = read
-	// log.Printf("leave %#v : %v", next, err)
-	return next, newErrEnumScanner(err, token)
-}
-
-func EnumScan(in *bufio.Scanner) *EnumScanner {
-	return &EnumScanner{in, true}
-}
-
-func EnumRead(in io.Reader, split bufio.SplitFunc) *EnumScanner {
-	enum := EnumScan(bufio.NewScanner(in))
-	enum.in.Split(split)
-	return enum
-}
-
-type ErrEnumScanner struct {
-	Err   error
-	Token string
-}
-
-func (e ErrEnumScanner) Error() string {
-	return fmt.Sprintf("token %q: %v", e.Token, e.Err)
-}
-
-func newErrEnumScanner(err error, token []byte) error {
-	if err == nil {
-		return nil
-	}
-	return ErrEnumScanner{err, string(token)}
-}
-
+// Run executes e starting with it by Stepping e until it reaches a
+// final state (either by reaching the end of input or an actual nil
+// Iteratee). Returns the first error encountered.
 func Run(e Enumerator, it Iteratee) (err error) {
 	for {
 		it, err = e.Step(it)
@@ -74,56 +57,123 @@ func Run(e Enumerator, it Iteratee) (err error) {
 	}
 }
 
+// ScanEnumerator is an Enumerator with a backing bufio.Scanner.
+type ScanEnumerator struct {
+	in   *bufio.Scanner
+	scan bool // true iff we must call scan before getting next token.
+}
+
+func (e *ScanEnumerator) Step(it Iteratee) (Iteratee, error) {
+	if e.scan && !e.in.Scan() {
+		err := e.in.Err()
+		if err == nil {
+			err = it.Final()
+		}
+		return nil, err
+	}
+	token := e.in.Bytes()
+	next, read, err := it.Next(token)
+	e.scan = read
+	return next, WrapTokenError(token, err)
+}
+
+func NewScanEnumerator(in *bufio.Scanner) *ScanEnumerator {
+	return &ScanEnumerator{in, true}
+}
+
+func NewScanEnumeratorWith(in io.Reader, split bufio.SplitFunc) *ScanEnumerator {
+	enum := NewScanEnumerator(bufio.NewScanner(in))
+	enum.in.Split(split)
+	return enum
+}
+
+// TokenErr wraps an error with the input token.
+type TokenErr struct {
+	Token string
+	Err   error
+}
+
+func (e TokenErr) Error() string {
+	return fmt.Sprintf("token %q: %v", e.Token, e.Err)
+}
+
+// WrapTokenError creates an appropriate error when err is not nil.
+func WrapTokenError(token Token, err error) error {
+	if err == nil {
+		return nil
+	}
+	return TokenErr{string(token), err}
+}
+
+// Simple utility Iteratees.
+
 // eofI ensures there is no trailing input.
 type eofI struct{}
 
 func (_ eofI) Final() error { return nil }
-func (_ eofI) Next(token []byte) (Iteratee, bool, error) {
+func (_ eofI) Next(token Token) (Iteratee, bool, error) {
 	return nil, false, ErrExpect("<eof>")
 }
 
-var (
-	EOF = eofI{} // an iteratee that ensures there is no trailing input or returns ErrTrailingInput.
-)
+// skipI skips exactly one token.
+type skipI struct{}
 
-type Match string
-
-func (it Match) Final() error {
-	return ErrExpectQ(it)
+func (_ skipI) Final() error { return ErrExpect("a token") }
+func (_ skipI) Next(token Token) (Iteratee, bool, error) {
+	return nil, true, nil
 }
 
-func (it Match) Next(token []byte) (Iteratee, bool, error) {
+var (
+	EOF  = eofI{}  // an Iteratee that ensures there is no trailing input or returns error.
+	Skip = skipI{} // an Iteratee that skips exactly one token.
+)
+
+// Match requires the next token to be exactly the underlying string
+// (not EOF, not anything else). When the next token matches, it
+// finishes successfully. Otherwise an error is returned.
+func Match(s string) Iteratee {
+	return matchI(s)
+}
+
+// matchI implements Match().
+type matchI string
+
+func (it matchI) Final() error { return ErrExpectQ(it) }
+func (it matchI) Next(token Token) (Iteratee, bool, error) {
 	if string(token) == string(it) {
 		return nil, true, nil
 	}
 	return nil, false, ErrExpectQ(it)
 }
 
-type SkipAny string
+// SkipAny skips zero or more repetition of s.
+func SkipAny(s string) Iteratee {
+	return skipAnyI(s)
+}
 
-func (it SkipAny) Final() error { return nil }
+// skipAnyI implements SkipAny.
+type skipAnyI string
 
-func (it SkipAny) Next(token []byte) (Iteratee, bool, error) {
+func (it skipAnyI) Final() error { return nil }
+func (it skipAnyI) Next(token Token) (Iteratee, bool, error) {
 	if string(token) == string(it) {
 		return it, true, nil
 	}
 	return nil, false, nil
 }
 
-type skipI struct{}
-
-func (_ skipI) Final() error { return ErrExpect("a token") }
-func (_ skipI) Next(token []byte) (Iteratee, bool, error) {
-	return nil, true, nil
+// Seq represents an Iteratee, when run executes each Iteratee to
+// final in order.
+func Seq(its ...Iteratee) Iteratee {
+	return seqI(its)
 }
 
-var Skip skipI
-
-type Then struct {
+// thenI executes A to final and then B to final.
+type thenI struct {
 	A, B Iteratee
 }
 
-func (it Then) Final() error {
+func (it thenI) Final() error {
 	if err := it.A.Final(); err != nil {
 		return err
 	}
@@ -133,20 +183,22 @@ func (it Then) Final() error {
 	return nil
 }
 
-func (it Then) Next(token []byte) (Iteratee, bool, error) {
+func (it thenI) Next(token Token) (Iteratee, bool, error) {
 	next, read, err := it.A.Next(token)
 	if err != nil {
 		return nil, false, err
 	}
 	if next != nil {
-		return Then{next, it.B}, read, nil
+		return thenI{next, it.B}, read, nil
 	}
 	return it.B, read, nil
 }
 
-type Seq []Iteratee
+// seqI implements Seq(). Its content must no be modified during
+// execution.
+type seqI []Iteratee
 
-func (it Seq) Final() error {
+func (it seqI) Final() error {
 	for _, i := range it {
 		if err := i.Final(); err != nil {
 			return err
@@ -155,7 +207,7 @@ func (it Seq) Final() error {
 	return nil
 }
 
-func (it Seq) Next(token []byte) (Iteratee, bool, error) {
+func (it seqI) Next(token Token) (Iteratee, bool, error) {
 	if len(it) == 0 {
 		return nil, false, nil
 	}
@@ -164,23 +216,29 @@ func (it Seq) Next(token []byte) (Iteratee, bool, error) {
 		return nil, false, err
 	}
 	if next != nil {
-		return Then{next, it[1:]}, read, nil
+		return thenI{next, it[1:]}, read, nil
 	}
 	return it[1:], read, nil
 }
 
-type Star struct {
+// Star repeats an Iteratee until it can not further proceed.
+func Star(it Iteratee) Iteratee {
+	return starI{it}
+}
+
+// starI implements Star().
+type starI struct {
 	A Iteratee
 }
 
-func (it Star) Final() error { return nil }
-func (it Star) Next(token []byte) (Iteratee, bool, error) {
+func (it starI) Final() error { return nil }
+func (it starI) Next(token Token) (Iteratee, bool, error) {
 	next, read, err := it.A.Next(token)
 	if err != nil {
 		return nil, false, nil
 	}
 	if next != nil {
-		return Then{next, it}, read, nil
+		return thenI{next, it}, read, nil
 	}
 	return it, read, nil
 }

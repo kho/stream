@@ -11,7 +11,7 @@ import (
 type CopyIteratee []string
 
 func (i *CopyIteratee) Final() error { return nil }
-func (i *CopyIteratee) Next(token []byte) (Iteratee, bool, error) {
+func (i *CopyIteratee) Next(token Token) (Iteratee, bool, error) {
 	*i = append(*i, string(token))
 	return i, true, nil
 }
@@ -65,7 +65,7 @@ func (i Balance) Final() error {
 	return ErrRightParent
 }
 
-func (i Balance) Next(token []byte) (Iteratee, bool, error) {
+func (i Balance) Next(token Token) (Iteratee, bool, error) {
 	switch string(token) {
 	case "(":
 		return i + 1, true, nil
@@ -97,7 +97,7 @@ func TestFoo(t *testing.T) {
 		{"ab(\tcd\n e ) ", []string{"ab", "(", "cd", "e", ")"}},
 	} {
 		var tok CopyIteratee
-		enum := EnumRead(strings.NewReader(i.Input), LispTokenizer)
+		enum := NewScanEnumeratorWith(strings.NewReader(i.Input), LispTokenizer)
 		if err := Run(enum, &tok); err != nil {
 			t.Errorf("unexpected error: input %q; error %q", i, err)
 		} else if !reflect.DeepEqual([]string(tok), i.Tokens) {
@@ -105,12 +105,12 @@ func TestFoo(t *testing.T) {
 		}
 	}
 
-	abcN := Then{Star{Then{Match("a"), Then{Match("b"), Star{Match("c")}}}}, Then{Match("x"), EOF}}
-	enumGood := EnumRead(strings.NewReader("ababcabccx"), bufio.ScanBytes)
+	abcN := Seq(Star(Seq(Match("a"), Match("b"), Star(Match("c")))), Seq(Match("x"), EOF))
+	enumGood := NewScanEnumeratorWith(strings.NewReader("ababcabccx"), bufio.ScanBytes)
 	if err := Run(enumGood, abcN); err != nil {
 		t.Errorf("unexpected error: ", err)
 	}
-	enumBad := EnumRead(strings.NewReader("abxy"), bufio.ScanBytes)
+	enumBad := NewScanEnumeratorWith(strings.NewReader("abxy"), bufio.ScanBytes)
 	if err := Run(enumBad, abcN); err == nil {
 		t.Errorf("expect error")
 	} else {
@@ -118,16 +118,16 @@ func TestFoo(t *testing.T) {
 	}
 
 	var bal Balance
-	if err := Run(EnumRead(strings.NewReader("(()(()))"), bufio.ScanBytes), bal); err != nil {
+	if err := Run(NewScanEnumeratorWith(strings.NewReader("(()(()))"), bufio.ScanBytes), bal); err != nil {
 		t.Errorf("got error %v", err)
 	}
-	if err := Run(EnumRead(strings.NewReader("(()(()))("), bufio.ScanBytes), bal); err != nil {
+	if err := Run(NewScanEnumeratorWith(strings.NewReader("(()(()))("), bufio.ScanBytes), bal); err != nil {
 		t.Errorf("got error %v", err)
 	}
-	if err := Run(EnumRead(strings.NewReader("(()(())"), bufio.ScanBytes), bal); err == nil {
+	if err := Run(NewScanEnumeratorWith(strings.NewReader("(()(())"), bufio.ScanBytes), bal); err == nil {
 		t.Errorf("expect error")
 	}
-	if err := Run(EnumRead(strings.NewReader("(()(()))("), bufio.ScanBytes), Then{bal, EOF}); err == nil {
+	if err := Run(NewScanEnumeratorWith(strings.NewReader("(()(()))("), bufio.ScanBytes), Seq(bal, EOF)); err == nil {
 		t.Errorf("expect error")
 	}
 }
