@@ -144,7 +144,7 @@ func (it thenI) Next(token Token) (Iteratee, bool, error) {
 	return it.B, read, nil
 }
 
-// seqI implements Seq(). Its content must no be modified during
+// seqI implements Seq(). Its content must not be modified during
 // execution.
 type seqI []Iteratee
 
