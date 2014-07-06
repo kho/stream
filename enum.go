@@ -47,7 +47,7 @@ func (e TokenErr) Error() string {
 }
 
 // WrapTokenError creates an appropriate error when err is not nil.
-func WrapTokenError(token Token, err error) error {
+func WrapTokenError(token []byte, err error) error {
 	if err == nil {
 		return nil
 	}

@@ -5,9 +5,6 @@ import (
 	"fmt"
 )
 
-// Token is the unit of input being consumed by Iteratees.
-type Token []byte
-
 // Iteratee is a state in a (not necessarily finite) state machine.
 //
 // TODO: some convention about data fields.
@@ -28,7 +25,7 @@ type Iteratee interface {
 	// and the returned bool indicates whether the input token has been
 	// consumed. Specifically, the next state may be nil, indicating
 	// reaching a final state.
-	Next(Token) (Iteratee, bool, error)
+	Next([]byte) (Iteratee, bool, error)
 }
 
 // Enumerator is the input source. It gathers input tokens and
@@ -61,7 +58,7 @@ func Run(e Enumerator, it Iteratee) (err error) {
 type eofI struct{}
 
 func (_ eofI) Final() error { return nil }
-func (_ eofI) Next(token Token) (Iteratee, bool, error) {
+func (_ eofI) Next(token []byte) (Iteratee, bool, error) {
 	return nil, false, ErrExpect("<eof>")
 }
 
@@ -69,7 +66,7 @@ func (_ eofI) Next(token Token) (Iteratee, bool, error) {
 type skipI struct{}
 
 func (_ skipI) Final() error { return ErrExpect("a token") }
-func (_ skipI) Next(token Token) (Iteratee, bool, error) {
+func (_ skipI) Next(token []byte) (Iteratee, bool, error) {
 	return nil, true, nil
 }
 
@@ -89,7 +86,7 @@ func Match(s string) Iteratee {
 type matchI string
 
 func (it matchI) Final() error { return ErrExpectQ(it) }
-func (it matchI) Next(token Token) (Iteratee, bool, error) {
+func (it matchI) Next(token []byte) (Iteratee, bool, error) {
 	if string(token) == string(it) {
 		return nil, true, nil
 	}
@@ -105,7 +102,7 @@ func SkipAny(s string) Iteratee {
 type skipAnyI string
 
 func (it skipAnyI) Final() error { return nil }
-func (it skipAnyI) Next(token Token) (Iteratee, bool, error) {
+func (it skipAnyI) Next(token []byte) (Iteratee, bool, error) {
 	if string(token) == string(it) {
 		return it, true, nil
 	}
@@ -133,7 +130,7 @@ func (it thenI) Final() error {
 	return nil
 }
 
-func (it thenI) Next(token Token) (Iteratee, bool, error) {
+func (it thenI) Next(token []byte) (Iteratee, bool, error) {
 	next, read, err := it.A.Next(token)
 	if err != nil {
 		return nil, false, err
@@ -157,7 +154,7 @@ func (it seqI) Final() error {
 	return nil
 }
 
-func (it seqI) Next(token Token) (Iteratee, bool, error) {
+func (it seqI) Next(token []byte) (Iteratee, bool, error) {
 	if len(it) == 0 {
 		return nil, false, nil
 	}
@@ -182,7 +179,7 @@ type starI struct {
 }
 
 func (it starI) Final() error { return nil }
-func (it starI) Next(token Token) (Iteratee, bool, error) {
+func (it starI) Next(token []byte) (Iteratee, bool, error) {
 	next, read, err := it.A.Next(token)
 	if err != nil {
 		return nil, false, nil

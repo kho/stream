@@ -11,7 +11,7 @@ import (
 type CopyIteratee []string
 
 func (i *CopyIteratee) Final() error { return nil }
-func (i *CopyIteratee) Next(token Token) (Iteratee, bool, error) {
+func (i *CopyIteratee) Next(token []byte) (Iteratee, bool, error) {
 	*i = append(*i, string(token))
 	return i, true, nil
 }
@@ -65,7 +65,7 @@ func (i Balance) Final() error {
 	return ErrRightParent
 }
 
-func (i Balance) Next(token Token) (Iteratee, bool, error) {
+func (i Balance) Next(token []byte) (Iteratee, bool, error) {
 	switch string(token) {
 	case "(":
 		return i + 1, true, nil
