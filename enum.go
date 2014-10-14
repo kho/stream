@@ -53,3 +53,16 @@ func WrapTokenError(token []byte, err error) error {
 	}
 	return TokenErr{string(token), err}
 }
+
+// SplitState is a state in a stateful bufio.SplitFunc.
+type SplitState interface {
+	Next(data []byte, atEOF bool) (state SplitState, advance int, token []byte, err error)
+}
+
+// StatefulSplitFunc creates a bufio.SplitFunc from that starts from state s.
+func StatefulSplitFunc(s SplitState) bufio.SplitFunc {
+	return func(data []byte, atEOF bool) (advance int, token []byte, err error) {
+		s, advance, token, err = s.Next(data, atEOF)
+		return
+	}
+}
