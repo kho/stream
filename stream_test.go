@@ -31,6 +31,9 @@ func LispTokenizer(data []byte, atEOF bool) (advance int, token []byte, err erro
 			break
 		}
 	}
+	if i == len(data) {
+		return i, nil, nil
+	}
 	if isSpace(b) {
 		return len(data), nil, nil
 	}
@@ -108,11 +111,11 @@ func TestFoo(t *testing.T) {
 	abcN := Seq(Star(Seq(Match("a"), Match("b"), Star(Match("c")))), Seq(Match("x"), EOF))
 	enumGood := NewScanEnumeratorWith(strings.NewReader("ababcabccx"), bufio.ScanBytes)
 	if err := Run(enumGood, abcN); err != nil {
-		t.Errorf("unexpected error: ", err)
+		t.Errorf("unexpected error: %v", err)
 	}
 	enumBad := NewScanEnumeratorWith(strings.NewReader("abxy"), bufio.ScanBytes)
 	if err := Run(enumBad, abcN); err == nil {
-		t.Errorf("expect error")
+		t.Error("expect error")
 	} else {
 		t.Log("enumBad gives:", err)
 	}
